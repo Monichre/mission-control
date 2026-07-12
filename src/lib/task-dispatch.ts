@@ -10,8 +10,29 @@ import { parseJsonlTranscript, readSessionJsonl, type TranscriptMessage } from '
 import { syncTaskOutbound } from './github-sync-engine'
 import { formatWorkspaceContextSection, generateContextPayload } from './memory-utils'
 import { MEMORY_PATH } from './memory-path'
+import { getUniversalTemplate, UNIVERSAL_TEMPLATES } from './framework-templates'
 
 const AGENT_DISPATCH_ACCEPT_TIMEOUT_MS = 60_000
+export const CAPABILITIES_SECTION_MARKER = '## Agent Capabilities'
+const PROMPT_CAPABILITIES_LIMIT = 40
+
+const ROLE_TEMPLATE_ALIASES: Record<string, string> = {
+  coder: 'developer',
+  developer: 'developer',
+  dev: 'developer',
+  reviewer: 'reviewer',
+  qa: 'reviewer',
+  researcher: 'researcher',
+  research: 'researcher',
+  assistant: 'content-creator',
+  writer: 'content-creator',
+  orchestrator: 'orchestrator',
+  security: 'security-auditor',
+  auditor: 'security-auditor',
+  devops: 'developer',
+  tester: 'developer',
+  agent: 'developer',
+}
 
 /** Sync task to GitHub/GNAP and broadcast escalation if task failed */
 function syncAndEscalateIfFailed(task: { id: number; title: string; status: string; priority: string; project_id?: number | null; workspace_id: number; description?: string | null }, newStatus: string, errorMsg?: string, dispatchAttempts?: number): void {
@@ -91,8 +112,142 @@ async function loadWorkspaceContextSection(): Promise<string> {
   }
 }
 
+function parseAgentConfigObject(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function normalizeCapabilityList(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  return [...new Set(
+    values
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => value.trim()),
+  )]
+}
+
+function resolveCapabilitiesFromRole(role: string | null | undefined): string[] {
+  if (!role) return []
+
+  const normalized = role.toLowerCase().trim()
+  const directTemplate = getUniversalTemplate(normalized)
+  if (directTemplate?.capabilities.length) return directTemplate.capabilities
+
+  const alias = ROLE_TEMPLATE_ALIASES[normalized]
+  if (alias) {
+    const aliasTemplate = getUniversalTemplate(alias)
+    if (aliasTemplate?.capabilities.length) return aliasTemplate.capabilities
+  }
+
+  for (const template of UNIVERSAL_TEMPLATES) {
+    const templateLabel = template.label.toLowerCase()
+    if (normalized.includes(template.type) || normalized.includes(templateLabel)) {
+      return template.capabilities
+    }
+  }
+
+  return []
+}
+
+export function resolveAgentRunCapabilities(
+  agentConfig: string | null | undefined,
+  roleHint?: string | null,
+): string[] {
+  const cfg = parseAgentConfigObject(agentConfig)
+
+  const explicitCapabilities = normalizeCapabilityList(cfg?.capabilities)
+  if (explicitCapabilities.length > 0) {
+    return explicitCapabilities.slice(0, PROMPT_CAPABILITIES_LIMIT)
+  }
+
+  const toolsAllow = normalizeCapabilityList(
+    cfg?.tools && typeof cfg.tools === 'object' && !Array.isArray(cfg.tools)
+      ? (cfg.tools as Record<string, unknown>).allow
+      : undefined,
+  )
+  if (toolsAllow.length > 0) {
+    return toolsAllow.slice(0, PROMPT_CAPABILITIES_LIMIT)
+  }
+
+  const toolsets = normalizeCapabilityList(cfg?.toolsets)
+  if (toolsets.length > 0) {
+    return toolsets.slice(0, PROMPT_CAPABILITIES_LIMIT)
+  }
+
+  const templateType =
+    (typeof cfg?.template === 'string' && cfg.template) ||
+    (typeof cfg?.universalTemplate === 'string' && cfg.universalTemplate) ||
+    null
+  if (templateType) {
+    const templateCapabilities = getUniversalTemplate(templateType)?.capabilities ?? []
+    if (templateCapabilities.length > 0) return templateCapabilities
+  }
+
+  const identityTheme =
+    cfg?.identity && typeof cfg.identity === 'object' && !Array.isArray(cfg.identity)
+      ? (cfg.identity as Record<string, unknown>).theme
+      : null
+
+  return resolveCapabilitiesFromRole(
+    roleHint ||
+      (typeof identityTheme === 'string' ? identityTheme : null),
+  )
+}
+
+export function formatCapabilitiesSection(capabilities: string[]): string {
+  const items = capabilities.filter(Boolean).slice(0, PROMPT_CAPABILITIES_LIMIT)
+  if (items.length === 0) return ''
+
+  const lines = [
+    CAPABILITIES_SECTION_MARKER,
+    '',
+    'You have access to:',
+    ...items.map((item) => `- ${item}`),
+  ]
+
+  if (capabilities.length > PROMPT_CAPABILITIES_LIMIT) {
+    lines.push(`- ... and ${capabilities.length - PROMPT_CAPABILITIES_LIMIT} more`)
+  }
+
+  return `${lines.join('\n')}\n\n`
+}
+
+function buildCapabilitiesSection(
+  agentConfig: string | null | undefined,
+  roleHint?: string | null,
+): string {
+  return formatCapabilitiesSection(resolveAgentRunCapabilities(agentConfig, roleHint))
+}
+
+function buildReviewCapabilitiesSection(agentConfig: string | null | undefined): string {
+  const cfg = parseAgentConfigObject(agentConfig)
+  const explicitCapabilities = normalizeCapabilityList(cfg?.capabilities)
+  if (explicitCapabilities.length > 0) {
+    return formatCapabilitiesSection(explicitCapabilities)
+  }
+
+  const templateType =
+    (typeof cfg?.template === 'string' && cfg.template) ||
+    (typeof cfg?.universalTemplate === 'string' && cfg.universalTemplate) ||
+    null
+  if (templateType) {
+    const templateCapabilities = getUniversalTemplate(templateType)?.capabilities ?? []
+    if (templateCapabilities.length > 0) {
+      return formatCapabilitiesSection(templateCapabilities)
+    }
+  }
+
+  return formatCapabilitiesSection(resolveCapabilitiesFromRole('reviewer'))
+}
+
 export async function buildTaskPrompt(task: DispatchableTask, rejectionFeedback?: string | null): Promise<string> {
   const workspaceContext = await loadWorkspaceContextSection()
+  const capabilitiesSection = buildCapabilitiesSection(task.agent_config)
   const ticket = task.ticket_prefix && task.project_ticket_no
     ? `${task.ticket_prefix}-${String(task.project_ticket_no).padStart(3, '0')}`
     : `TASK-${task.id}`
@@ -100,6 +255,9 @@ export async function buildTaskPrompt(task: DispatchableTask, rejectionFeedback?
   const lines: string[] = []
   if (workspaceContext) {
     lines.push(workspaceContext.trimEnd(), '')
+  }
+  if (capabilitiesSection) {
+    lines.push(capabilitiesSection.trimEnd(), '')
   }
 
   lines.push(
@@ -893,6 +1051,7 @@ function resolveGatewayAgentIdForReview(task: ReviewableTask): string {
 
 export async function buildReviewPrompt(task: ReviewableTask): Promise<string> {
   const workspaceContext = await loadWorkspaceContextSection()
+  const capabilitiesSection = buildReviewCapabilitiesSection(task.agent_config)
   const ticket = task.ticket_prefix && task.project_ticket_no
     ? `${task.ticket_prefix}-${String(task.project_ticket_no).padStart(3, '0')}`
     : `TASK-${task.id}`
@@ -900,6 +1059,9 @@ export async function buildReviewPrompt(task: ReviewableTask): Promise<string> {
   const lines: string[] = []
   if (workspaceContext) {
     lines.push(workspaceContext.trimEnd(), '')
+  }
+  if (capabilitiesSection) {
+    lines.push(capabilitiesSection.trimEnd(), '')
   }
 
   lines.push(
