@@ -162,7 +162,7 @@ export function resolveAgentRunCapabilities(
 
   const explicitCapabilities = normalizeCapabilityList(cfg?.capabilities)
   if (explicitCapabilities.length > 0) {
-    return explicitCapabilities.slice(0, PROMPT_CAPABILITIES_LIMIT)
+    return explicitCapabilities
   }
 
   const toolsAllow = normalizeCapabilityList(
@@ -171,12 +171,12 @@ export function resolveAgentRunCapabilities(
       : undefined,
   )
   if (toolsAllow.length > 0) {
-    return toolsAllow.slice(0, PROMPT_CAPABILITIES_LIMIT)
+    return toolsAllow
   }
 
   const toolsets = normalizeCapabilityList(cfg?.toolsets)
   if (toolsets.length > 0) {
-    return toolsets.slice(0, PROMPT_CAPABILITIES_LIMIT)
+    return toolsets
   }
 
   const templateType =
@@ -224,24 +224,9 @@ function buildCapabilitiesSection(
   return formatCapabilitiesSection(resolveAgentRunCapabilities(agentConfig, roleHint))
 }
 
-function buildReviewCapabilitiesSection(agentConfig: string | null | undefined): string {
-  const cfg = parseAgentConfigObject(agentConfig)
-  const explicitCapabilities = normalizeCapabilityList(cfg?.capabilities)
-  if (explicitCapabilities.length > 0) {
-    return formatCapabilitiesSection(explicitCapabilities)
-  }
-
-  const templateType =
-    (typeof cfg?.template === 'string' && cfg.template) ||
-    (typeof cfg?.universalTemplate === 'string' && cfg.universalTemplate) ||
-    null
-  if (templateType) {
-    const templateCapabilities = getUniversalTemplate(templateType)?.capabilities ?? []
-    if (templateCapabilities.length > 0) {
-      return formatCapabilitiesSection(templateCapabilities)
-    }
-  }
-
+function buildReviewCapabilitiesSection(_agentConfig?: string | null | undefined): string {
+  // Review prompts always use the reviewer persona template. The joined agent_config
+  // in runAegisReviews belongs to the task implementer, not Aegis — never inherit it.
   return formatCapabilitiesSection(resolveCapabilitiesFromRole('reviewer'))
 }
 

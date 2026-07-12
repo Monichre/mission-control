@@ -231,6 +231,33 @@ describe('prompt capabilities wiring', () => {
     )
   })
 
+  it('ignores implementer explicit capabilities in review prompts', async () => {
+    const prompt = await buildReviewPrompt({
+      id: baseTask.id,
+      title: baseTask.title,
+      description: baseTask.description,
+      status: 'review',
+      priority: baseTask.priority,
+      resolution: 'Done.',
+      assigned_to: baseTask.assigned_to,
+      agent_config: JSON.stringify({
+        capabilities: ['code-review', 'testing'],
+        template: 'developer',
+      }),
+      workspace_id: baseTask.workspace_id,
+      project_id: baseTask.project_id,
+      ticket_prefix: baseTask.ticket_prefix,
+      project_ticket_no: baseTask.project_ticket_no,
+    })
+
+    expect(prompt).toContain('- code_read')
+    expect(prompt).toContain('- quality_review')
+    expect(prompt).toContain('- security_audit')
+    expect(prompt).not.toContain('- code-review')
+    expect(prompt).not.toContain('- testing')
+    expect(prompt).not.toContain('- code_write')
+  })
+
   it('omits capabilities block when agent config has no resolvable capabilities', async () => {
     const prompt = await buildTaskPrompt(baseTask)
     expect(prompt).not.toContain(CAPABILITIES_SECTION_MARKER)
