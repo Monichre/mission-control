@@ -140,6 +140,59 @@ const TOOLS = [
       return api('GET', `/api/agents/${id}/attribution${qs}`);
     },
   },
+  {
+    name: 'mc_create_agent',
+    description: 'Create a new agent in Mission Control',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Agent name (required)' },
+        role: { type: 'string', description: 'Agent role (required unless template is set)' },
+        template: { type: 'string', description: 'Agent template name to apply' },
+        status: { type: 'string', description: 'Initial status: online, offline, busy, idle, error' },
+        session_key: { type: 'string', description: 'Session key identifier' },
+        soul_content: { type: 'string', description: 'Initial SOUL content' },
+        runtime_type: { type: 'string', description: 'Runtime: hermes, openclaw, claude, codex, custom' },
+        config: { type: 'object', description: 'Agent config object' },
+        gateway_config: { type: 'object', description: 'OpenClaw gateway config fields' },
+        write_to_gateway: { type: 'boolean', description: 'Write config to gateway after create' },
+        provision_openclaw_workspace: { type: 'boolean', description: 'Provision OpenClaw workspace on create' },
+      },
+      required: ['name'],
+    },
+    handler: async (args) => api('POST', '/api/agents', args),
+  },
+  {
+    name: 'mc_update_agent',
+    description: 'Update an agent by ID or name (role, gateway_config, write_to_gateway)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: ['string', 'number'], description: 'Agent ID or name' },
+        role: { type: 'string', description: 'New role' },
+        gateway_config: { type: 'object', description: 'OpenClaw gateway config fields to merge' },
+        write_to_gateway: { type: 'boolean', description: 'Write gateway_config to gateway file' },
+      },
+      required: ['id'],
+    },
+    handler: async ({ id, ...fields }) => api('PUT', `/api/agents/${id}`, fields),
+  },
+  {
+    name: 'mc_delete_agent',
+    description: 'Delete an agent by ID or name (admin role required)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: ['string', 'number'], description: 'Agent ID or name' },
+        remove_workspace: { type: 'boolean', description: 'Also remove OpenClaw agent workspace (destructive)' },
+      },
+      required: ['id'],
+    },
+    handler: async ({ id, remove_workspace }) => {
+      const body = remove_workspace ? { remove_workspace: true } : undefined;
+      return api('DELETE', `/api/agents/${id}`, body);
+    },
+  },
 
   // --- Agent Memory ---
   {
@@ -368,6 +421,16 @@ const TOOLS = [
     handler: async ({ id, ...fields }) => api('PUT', `/api/tasks/${id}`, fields),
   },
   {
+    name: 'mc_delete_task',
+    description: 'Delete a task by ID',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: ['string', 'number'], description: 'Task ID' } },
+      required: ['id'],
+    },
+    handler: async ({ id }) => api('DELETE', `/api/tasks/${id}`),
+  },
+  {
     name: 'mc_poll_task_queue',
     description: 'Poll the task queue for an agent — returns the next available task(s) to work on',
     inputSchema: {
@@ -549,6 +612,79 @@ const TOOLS = [
     handler: async ({ days }) =>
       api('GET', `/api/tokens/by-agent?days=${days || 30}`),
   },
+  {
+    name: 'mc_list_tokens',
+    description: 'List recent token usage records with optional timeframe filter',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeframe: { type: 'string', description: 'Timeframe: hour, day, week, month, all (default: all)' },
+      },
+      required: [],
+    },
+    handler: async ({ timeframe }) => {
+      let qs = '?action=list';
+      if (timeframe) qs += `&timeframe=${encodeURIComponent(timeframe)}`;
+      return api('GET', `/api/tokens${qs}`);
+    },
+  },
+  {
+    name: 'mc_task_costs',
+    description: 'Get per-task cost breakdown with attribution metadata',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeframe: { type: 'string', description: 'Timeframe: hour, day, week, month, all' },
+      },
+      required: [],
+    },
+    handler: async ({ timeframe }) => {
+      let qs = '?action=task-costs';
+      if (timeframe) qs += `&timeframe=${encodeURIComponent(timeframe)}`;
+      return api('GET', `/api/tokens${qs}`);
+    },
+  },
+  {
+    name: 'mc_token_trends',
+    description: 'Get hourly token usage trends for the last 24 hours',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeframe: { type: 'string', description: 'Timeframe filter applied before trend aggregation' },
+      },
+      required: [],
+    },
+    handler: async ({ timeframe }) => {
+      let qs = '?action=trends';
+      if (timeframe) qs += `&timeframe=${encodeURIComponent(timeframe)}`;
+      return api('GET', `/api/tokens${qs}`);
+    },
+  },
+  {
+    name: 'mc_token_export',
+    description: 'Export token usage data as JSON or CSV',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeframe: { type: 'string', description: 'Timeframe: hour, day, week, month, all' },
+        format: { type: 'string', description: 'Export format: json or csv (default json)' },
+        limit: { type: 'number', description: 'Max records to include' },
+      },
+      required: [],
+    },
+    handler: async ({ timeframe, format, limit }) => {
+      const params = new URLSearchParams({ action: 'export', format: format || 'json' });
+      if (timeframe) params.set('timeframe', timeframe);
+      if (limit) params.set('limit', String(limit));
+      return api('GET', `/api/tokens?${params}`);
+    },
+  },
+  {
+    name: 'mc_token_rotate_info',
+    description: 'Get metadata about the current API key (masked). Does not rotate the key.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    handler: async () => api('GET', '/api/tokens/rotate'),
+  },
 
   // --- Skills ---
   {
@@ -571,13 +707,159 @@ const TOOLS = [
     handler: async ({ source, name }) =>
       api('GET', `/api/skills?mode=content&source=${encodeURIComponent(source)}&name=${encodeURIComponent(name)}`),
   },
+  {
+    name: 'mc_upsert_skill',
+    description: 'Create or update a skill SKILL.md by source and name',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: { type: 'string', description: 'Skill source (e.g. project-agents, user-codex)' },
+        name: { type: 'string', description: 'Skill directory name' },
+        content: { type: 'string', description: 'Full SKILL.md content' },
+      },
+      required: ['source', 'name', 'content'],
+    },
+    handler: async ({ source, name, content }) =>
+      api('PUT', '/api/skills', { source, name, content }),
+  },
+  {
+    name: 'mc_delete_skill',
+    description: 'Delete a skill by source and name',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: { type: 'string', description: 'Skill source' },
+        name: { type: 'string', description: 'Skill directory name' },
+      },
+      required: ['source', 'name'],
+    },
+    handler: async ({ source, name }) =>
+      api('DELETE', `/api/skills?source=${encodeURIComponent(source)}&name=${encodeURIComponent(name)}`),
+  },
 
   // --- Cron ---
   {
     name: 'mc_list_cron',
     description: 'List all cron jobs',
     inputSchema: { type: 'object', properties: {}, required: [] },
-    handler: async () => api('GET', '/api/cron'),
+    handler: async () => api('GET', '/api/cron?action=list'),
+  },
+  {
+    name: 'mc_create_cron',
+    description: 'Create a cron job (OpenClaw agentTurn schedule)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Job name (required)' },
+        schedule: { type: 'string', description: 'Cron expression (required)' },
+        command: { type: 'string', description: 'Agent message/payload to run (required)' },
+        model: { type: 'string', description: 'Optional model override' },
+        description: { type: 'string', description: 'Optional description' },
+        stagger_seconds: { type: 'number', description: 'Optional schedule stagger in seconds' },
+      },
+      required: ['name', 'schedule', 'command'],
+    },
+    handler: async ({ name, schedule, command, model, description, stagger_seconds }) => {
+      const body = { action: 'add', jobName: name, name, schedule, command };
+      if (model) body.model = model;
+      if (description) body.description = description;
+      if (stagger_seconds !== undefined) body.staggerSeconds = stagger_seconds;
+      return api('POST', '/api/cron', body);
+    },
+  },
+  {
+    name: 'mc_update_cron',
+    description: 'Update a cron job by replacing the job with the same name (API add action)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Existing job name to replace (required)' },
+        schedule: { type: 'string', description: 'New cron expression (required)' },
+        command: { type: 'string', description: 'New agent message/payload (required)' },
+        model: { type: 'string', description: 'Optional model override' },
+        description: { type: 'string', description: 'Optional description' },
+        stagger_seconds: { type: 'number', description: 'Optional schedule stagger in seconds' },
+      },
+      required: ['name', 'schedule', 'command'],
+    },
+    handler: async ({ name, schedule, command, model, description, stagger_seconds }) => {
+      const body = { action: 'add', jobName: name, name, schedule, command };
+      if (model) body.model = model;
+      if (description) body.description = description;
+      if (stagger_seconds !== undefined) body.staggerSeconds = stagger_seconds;
+      return api('POST', '/api/cron', body);
+    },
+  },
+  {
+    name: 'mc_pause_cron',
+    description: 'Toggle cron job off via POST action=toggle. API has no idempotent pause — call mc_list_cron first to verify state.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: 'Cron job ID' },
+        job_name: { type: 'string', description: 'Cron job name (alternative to job_id)' },
+      },
+      required: [],
+    },
+    handler: async ({ job_id, job_name }) => {
+      const id = job_id || job_name;
+      if (!id) throw new Error('job_id or job_name is required');
+      return api('POST', '/api/cron', { action: 'toggle', jobId: id, jobName: id });
+    },
+  },
+  {
+    name: 'mc_resume_cron',
+    description: 'Toggle cron job on via POST action=toggle. API has no idempotent resume — call mc_list_cron first to verify state.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: 'Cron job ID' },
+        job_name: { type: 'string', description: 'Cron job name (alternative to job_id)' },
+      },
+      required: [],
+    },
+    handler: async ({ job_id, job_name }) => {
+      const id = job_id || job_name;
+      if (!id) throw new Error('job_id or job_name is required');
+      return api('POST', '/api/cron', { action: 'toggle', jobId: id, jobName: id });
+    },
+  },
+  {
+    name: 'mc_remove_cron',
+    description: 'Remove a cron job permanently',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: 'Cron job ID' },
+        job_name: { type: 'string', description: 'Cron job name (alternative to job_id)' },
+      },
+      required: [],
+    },
+    handler: async ({ job_id, job_name }) => {
+      const id = job_id || job_name;
+      if (!id) throw new Error('job_id or job_name is required');
+      return api('POST', '/api/cron', { action: 'remove', jobId: id, jobName: id });
+    },
+  },
+  {
+    name: 'mc_run_cron',
+    description: 'Manually trigger a cron job run (requires MISSION_CONTROL_ALLOW_COMMAND_TRIGGER=1 on server)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: 'Cron job ID' },
+        job_name: { type: 'string', description: 'Cron job name (alternative to job_id)' },
+        mode: { type: 'string', description: 'Trigger mode: force (default) or due' },
+      },
+      required: [],
+    },
+    handler: async ({ job_id, job_name, mode }) => {
+      const id = job_id || job_name;
+      if (!id) throw new Error('job_id or job_name is required');
+      const body = { action: 'trigger', jobId: id, jobName: id };
+      if (mode) body.mode = mode;
+      return api('POST', '/api/cron', body);
+    },
   },
 
   // --- Status ---
@@ -732,7 +1014,7 @@ for (const tool of TOOLS) {
 
 const SERVER_INFO = {
   name: 'mission-control',
-  version: '2.0.1',
+  version: '2.1.0',
 };
 
 const CAPABILITIES = {
@@ -846,4 +1128,13 @@ async function main() {
   process.stdin.resume();
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  TOOLS,
+  toolMap,
+  handleMessage,
+  SERVER_INFO,
+};
