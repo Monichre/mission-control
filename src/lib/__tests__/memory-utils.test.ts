@@ -3,6 +3,9 @@ import {
   extractWikiLinks,
   extractSchema,
   validateSchema,
+  formatWorkspaceContextSection,
+  WORKSPACE_CONTEXT_SECTION_MARKER,
+  type ContextPayload,
 } from '../memory-utils'
 
 describe('extractWikiLinks', () => {
@@ -104,5 +107,49 @@ describe('validateSchema', () => {
     const result = validateSchema(content)
     expect(result.valid).toBe(false)
     expect(result.errors).toHaveLength(3)
+  })
+})
+
+describe('formatWorkspaceContextSection', () => {
+  const samplePayload: ContextPayload = {
+    fileTree: ['memory/a.md', 'memory/b.md'],
+    recentFiles: [{ path: 'memory/a.md', modified: 1_700_000_000_000 }],
+    healthSummary: { overall: 'healthy', score: 85 },
+    maintenanceSignals: ['2 orphan files need wiki-links'],
+  }
+
+  test('includes workspace context marker and health summary when payload is non-empty', () => {
+    const section = formatWorkspaceContextSection(samplePayload)
+    expect(section).toContain(WORKSPACE_CONTEXT_SECTION_MARKER)
+    expect(section).toContain('Health: healthy (score 85/100)')
+    expect(section).toContain('### File tree')
+    expect(section).toContain('- memory/a.md')
+    expect(section).toContain('### Recent files')
+    expect(section).toContain('### Maintenance signals')
+    expect(section).toContain('- 2 orphan files need wiki-links')
+  })
+
+  test('returns empty string for empty payload', () => {
+    expect(formatWorkspaceContextSection(null)).toBe('')
+    expect(formatWorkspaceContextSection({
+      fileTree: [],
+      recentFiles: [],
+      healthSummary: { overall: 'healthy', score: 100 },
+      maintenanceSignals: [],
+    })).toBe('')
+  })
+
+  test('truncates large file trees for prompt bounds', () => {
+    const fileTree = Array.from({ length: 60 }, (_, index) => `memory/file-${index}.md`)
+    const section = formatWorkspaceContextSection({
+      ...samplePayload,
+      fileTree,
+      recentFiles: [],
+      maintenanceSignals: [],
+    })
+    expect(section).toContain('- memory/file-0.md')
+    expect(section).toContain('- memory/file-49.md')
+    expect(section).not.toContain('- memory/file-50.md')
+    expect(section).toContain('... and 10 more files')
   })
 })

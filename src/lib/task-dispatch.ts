@@ -8,6 +8,8 @@ import { config } from './config'
 import { getAllGatewaySessions } from './sessions'
 import { parseJsonlTranscript, readSessionJsonl, type TranscriptMessage } from './transcript-parser'
 import { syncTaskOutbound } from './github-sync-engine'
+import { formatWorkspaceContextSection, generateContextPayload } from './memory-utils'
+import { MEMORY_PATH } from './memory-path'
 
 const AGENT_DISPATCH_ACCEPT_TIMEOUT_MS = 60_000
 
@@ -78,17 +80,34 @@ function resolveGatewayAgentId(task: DispatchableTask): string {
   return task.agent_name
 }
 
-function buildTaskPrompt(task: DispatchableTask, rejectionFeedback?: string | null): string {
+async function loadWorkspaceContextSection(): Promise<string> {
+  if (!MEMORY_PATH) return ''
+  try {
+    const payload = await generateContextPayload(MEMORY_PATH)
+    return formatWorkspaceContextSection(payload)
+  } catch (err) {
+    logger.warn({ err }, 'Failed to load workspace context for task prompt')
+    return ''
+  }
+}
+
+export async function buildTaskPrompt(task: DispatchableTask, rejectionFeedback?: string | null): Promise<string> {
+  const workspaceContext = await loadWorkspaceContextSection()
   const ticket = task.ticket_prefix && task.project_ticket_no
     ? `${task.ticket_prefix}-${String(task.project_ticket_no).padStart(3, '0')}`
     : `TASK-${task.id}`
 
-  const lines = [
+  const lines: string[] = []
+  if (workspaceContext) {
+    lines.push(workspaceContext.trimEnd(), '')
+  }
+
+  lines.push(
     'You have been assigned a task in Mission Control.',
     '',
     `**[${ticket}] ${task.title}**`,
     `Priority: ${task.priority}`,
-  ]
+  )
 
   if (task.tags && task.tags.length > 0) {
     lines.push(`Tags: ${task.tags.join(', ')}`)
@@ -872,17 +891,23 @@ function resolveGatewayAgentIdForReview(task: ReviewableTask): string {
   return task.assigned_to || 'jarv'
 }
 
-function buildReviewPrompt(task: ReviewableTask): string {
+export async function buildReviewPrompt(task: ReviewableTask): Promise<string> {
+  const workspaceContext = await loadWorkspaceContextSection()
   const ticket = task.ticket_prefix && task.project_ticket_no
     ? `${task.ticket_prefix}-${String(task.project_ticket_no).padStart(3, '0')}`
     : `TASK-${task.id}`
 
-  const lines = [
+  const lines: string[] = []
+  if (workspaceContext) {
+    lines.push(workspaceContext.trimEnd(), '')
+  }
+
+  lines.push(
     'You are Aegis, the quality reviewer for Mission Control.',
     'Review the following completed task and its resolution.',
     '',
     `**[${ticket}] ${task.title}**`,
-  ]
+  )
 
   if (task.description) {
     lines.push('', '## Task Description', task.description)
@@ -954,7 +979,7 @@ export async function runAegisReviews(): Promise<{ ok: boolean; message: string 
     })
 
     try {
-      const prompt = buildReviewPrompt(task)
+      const prompt = await buildReviewPrompt(task)
       let agentResponse: AgentResponseParsed
 
       if (!isGatewayAvailable() && isDirectDispatchAvailable()) {
@@ -1255,7 +1280,7 @@ export async function dispatchAssignedTasks(): Promise<{ ok: boolean; message: s
       `).get(task.id) as { content: string } | undefined
       const rejectionFeedback = rejectionRow?.content?.replace(/^Quality Review Rejected:\n?/, '') || null
 
-      const prompt = buildTaskPrompt(task, rejectionFeedback)
+      const prompt = await buildTaskPrompt(task, rejectionFeedback)
 
       // Check if task has a target session specified in metadata
       const taskMeta = (() => {

@@ -597,6 +597,46 @@ export async function generateContextPayload(baseDir: string): Promise<ContextPa
   }
 }
 
+export const WORKSPACE_CONTEXT_SECTION_MARKER = '## Workspace Context'
+const PROMPT_FILE_TREE_LIMIT = 50
+
+/**
+ * Condense a context payload into a bounded markdown section for agent prompts.
+ * Returns an empty string when there is nothing meaningful to inject.
+ */
+export function formatWorkspaceContextSection(payload: ContextPayload | null | undefined): string {
+  if (!payload) return ''
+
+  const hasTree = payload.fileTree.length > 0
+  const hasRecent = payload.recentFiles.length > 0
+  const hasSignals = payload.maintenanceSignals.length > 0
+  if (!hasTree && !hasRecent && !hasSignals) return ''
+
+  const lines = [
+    WORKSPACE_CONTEXT_SECTION_MARKER,
+    '',
+    `Health: ${payload.healthSummary.overall} (score ${payload.healthSummary.score}/100)`,
+  ]
+
+  if (hasTree) {
+    const tree = payload.fileTree.slice(0, PROMPT_FILE_TREE_LIMIT)
+    lines.push('', '### File tree', ...tree.map((path) => `- ${path}`))
+    if (payload.fileTree.length > PROMPT_FILE_TREE_LIMIT) {
+      lines.push(`- ... and ${payload.fileTree.length - PROMPT_FILE_TREE_LIMIT} more files`)
+    }
+  }
+
+  if (hasRecent) {
+    lines.push('', '### Recent files', ...payload.recentFiles.map((file) => `- ${file.path}`))
+  }
+
+  if (hasSignals) {
+    lines.push('', '### Maintenance signals', ...payload.maintenanceSignals.map((signal) => `- ${signal}`))
+  }
+
+  return `${lines.join('\n')}\n\n`
+}
+
 // ─── Processing pipeline ─────────────────────────────────────────
 
 export interface ProcessingResult {
