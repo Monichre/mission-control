@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { config } from '@/lib/config'
+import { db_helpers } from '@/lib/db'
 import { logger } from '@/lib/logger'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -102,6 +103,20 @@ function mapLastStatus(status?: string): 'success' | 'error' | 'running' | undef
   if (s === 'error' || s === 'failed') return 'error'
   if (s === 'running' || s === 'pending') return 'running'
   return 'success' // default for unknown non-error statuses
+}
+
+function logCronMutation(
+  actor: string,
+  type: string,
+  description: string,
+  data: Record<string, unknown>,
+  workspaceId: number = 1,
+) {
+  try {
+    db_helpers.logActivity(type, 'cron', 0, actor, description, data, workspaceId)
+  } catch {
+    /* best-effort */
+  }
 }
 
 function mapOpenClawJob(job: OpenClawCronJob): CronJob {
@@ -291,6 +306,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Failed to save cron file' }, { status: 500 })
       }
 
+      logCronMutation(
+        auth.user?.username || 'unknown',
+        'cron_job_toggled',
+        `Cron job ${job.enabled ? 'enabled' : 'disabled'}: ${job.name}`,
+        { jobId: job.id, jobName: job.name, enabled: job.enabled, action: 'toggle' },
+        auth.user?.workspace_id ?? 1,
+      )
+
       return NextResponse.json({ success: true, enabled: job.enabled })
     }
 
@@ -354,11 +377,20 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Job not found' }, { status: 404 })
       }
 
+      const removedJob = cronFile.jobs[idx]
       cronFile.jobs.splice(idx, 1)
 
       if (!(await saveCronFile(cronFile))) {
         return NextResponse.json({ error: 'Failed to save cron file' }, { status: 500 })
       }
+
+      logCronMutation(
+        auth.user?.username || 'unknown',
+        'cron_job_removed',
+        `Removed cron job: ${removedJob.name}`,
+        { jobId: removedJob.id, jobName: removedJob.name, action: 'remove' },
+        auth.user?.workspace_id ?? 1,
+      )
 
       return NextResponse.json({ success: true })
     }
@@ -409,6 +441,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Failed to save cron file' }, { status: 500 })
       }
 
+      logCronMutation(
+        auth.user?.username || 'unknown',
+        'cron_job_added',
+        `Added cron job: ${name}`,
+        { jobId: newJob.id, jobName: name, schedule, action: 'add' },
+        auth.user?.workspace_id ?? 1,
+      )
+
       return NextResponse.json({ success: true })
     }
 
@@ -451,6 +491,20 @@ export async function POST(request: NextRequest) {
       if (!(await saveCronFile(cronFile))) {
         return NextResponse.json({ error: 'Failed to save cron file' }, { status: 500 })
       }
+
+      logCronMutation(
+        auth.user?.username || 'unknown',
+        'cron_job_cloned',
+        `Cloned cron job: ${sourceJob.name} → ${cloneName}`,
+        {
+          sourceJobId: sourceJob.id,
+          sourceJobName: sourceJob.name,
+          jobId: clonedJob.id,
+          jobName: cloneName,
+          action: 'clone',
+        },
+        auth.user?.workspace_id ?? 1,
+      )
 
       return NextResponse.json({ success: true, clonedName: cloneName })
     }

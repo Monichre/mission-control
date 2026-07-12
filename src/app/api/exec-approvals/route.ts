@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'node:crypto'
 import { requireRole } from '@/lib/auth'
 import { config } from '@/lib/config'
+import { db_helpers } from '@/lib/db'
 import { logger } from '@/lib/logger'
 import path from 'node:path'
 
@@ -148,6 +149,21 @@ export async function PUT(request: NextRequest) {
 
     const newRaw = JSON.stringify(parsed, null, 2) + '\n'
     await writeFile(filePath, newRaw, { mode: 0o600 })
+
+    try {
+      const agentIds = Object.keys(body.agents)
+      db_helpers.logActivity(
+        'exec_allowlist_updated',
+        'exec_approval',
+        0,
+        auth.user?.username || 'unknown',
+        `Updated exec approval allowlist for ${agentIds.length} agent(s)`,
+        { agentIds, action: 'allowlist_save' },
+        auth.user?.workspace_id ?? 1,
+      )
+    } catch {
+      /* best-effort */
+    }
 
     return NextResponse.json({ ok: true, hash: computeHash(newRaw) })
   } catch (err: any) {
