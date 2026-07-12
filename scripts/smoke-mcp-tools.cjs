@@ -24,6 +24,12 @@ const REQUIRED = [
   'mc_token_trends',
   'mc_token_export',
   'mc_token_rotate_info',
+  // Task 8: session primitives + knowledge raw access
+  'mc_pause_session',
+  'mc_terminate_session',
+  'mc_list_knowledge_files',
+  'mc_knowledge_link_graph',
+  'mc_knowledge_context',
 ];
 
 const FORBIDDEN = ['mc_rotate_token', 'mc_token_rotate'];

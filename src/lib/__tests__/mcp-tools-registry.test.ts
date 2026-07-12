@@ -27,12 +27,28 @@ const REQUIRED_MUTATION_TOOLS = [
   'mc_token_rotate_info',
 ]
 
+const REQUIRED_PRIMITIVE_TOOLS = [
+  'mc_pause_session',
+  'mc_terminate_session',
+  'mc_list_knowledge_files',
+  'mc_knowledge_link_graph',
+  'mc_knowledge_context',
+]
+
 describe('mc-mcp-server tool registry', () => {
   it('registers all required mutation and token tools', () => {
     const names = new Set(TOOLS.map((tool) => tool.name))
     for (const toolName of REQUIRED_MUTATION_TOOLS) {
       expect(names.has(toolName), `missing tool: ${toolName}`).toBe(true)
     }
+  })
+
+  it('registers session and knowledge raw primitive tools', () => {
+    const names = new Set(TOOLS.map((tool) => tool.name))
+    for (const toolName of REQUIRED_PRIMITIVE_TOOLS) {
+      expect(names.has(toolName), `missing tool: ${toolName}`).toBe(true)
+    }
+    expect(names.has('mc_control_session'), 'deprecated shim retained').toBe(true)
   })
 
   it('keeps unique tool names with schemas', () => {

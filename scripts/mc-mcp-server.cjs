@@ -71,6 +71,38 @@ async function api(method, route, body) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared primitives (used by multiple MCP tools)
+// ---------------------------------------------------------------------------
+
+async function controlSession(id, action) {
+  return api('POST', `/api/sessions/${id}/control`, { action });
+}
+
+async function listKnowledgeFiles({ path, depth } = {}) {
+  const params = new URLSearchParams({ action: 'tree' });
+  if (path) params.set('path', path);
+  if (depth !== undefined) params.set('depth', String(depth));
+  return api('GET', `/api/memory?${params}`);
+}
+
+async function fetchKnowledgeLinkGraph({ file } = {}) {
+  const qs = file ? `?file=${encodeURIComponent(file)}` : '';
+  return api('GET', `/api/memory/links${qs}`);
+}
+
+async function fetchKnowledgeContext() {
+  return api('GET', '/api/memory/context');
+}
+
+async function fetchKnowledgeHealth() {
+  return api('GET', '/api/memory/health');
+}
+
+async function runKnowledgeProcess(action) {
+  return api('POST', '/api/memory/process', { action });
+}
+
+// ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
 
@@ -277,10 +309,41 @@ const TOOLS = [
       api('POST', '/api/memory', { action: create ? 'create' : 'save', path, content }),
   },
   {
-    name: 'mc_knowledge_health',
-    description: 'Run health diagnostics on the knowledge base. Returns scores for schema compliance, connectivity, link integrity, freshness, atomicity, naming, organization, and description quality.',
+    name: 'mc_list_knowledge_files',
+    description: 'List knowledge base files and directories with metadata (path, name, type, size, modified). Raw primitive — use this to inspect structure before applying judgment in prompts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Subdirectory to list (omit for full tree)' },
+        depth: { type: 'number', description: 'Max directory depth (0-8, default unlimited)' },
+      },
+      required: [],
+    },
+    handler: async (args) => listKnowledgeFiles(args),
+  },
+  {
+    name: 'mc_knowledge_link_graph',
+    description: 'Read the wiki-link graph: all nodes with incoming/outgoing links and orphans, or per-file links when file is set. Raw primitive — interpret connectivity in prompts, not via analysis tools.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'Optional file path for per-file wiki-links and backlinks' },
+      },
+      required: [],
+    },
+    handler: async (args) => fetchKnowledgeLinkGraph(args),
+  },
+  {
+    name: 'mc_knowledge_context',
+    description: 'Read raw workspace context payload: file tree, recent files, health summary, and maintenance signals. No scoring judgment — use prompts to interpret.',
     inputSchema: { type: 'object', properties: {}, required: [] },
-    handler: async () => api('GET', '/api/memory/health'),
+    handler: async () => fetchKnowledgeContext(),
+  },
+  {
+    name: 'mc_knowledge_health',
+    description: '[Analysis helper] Pre-computed health scores (schema, links, freshness, etc.). Prefer mc_list_knowledge_files + mc_knowledge_link_graph for raw data; apply judgment in prompts/skills.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    handler: async () => fetchKnowledgeHealth(),
   },
   {
     name: 'mc_rebuild_search_index',
@@ -290,15 +353,15 @@ const TOOLS = [
   },
   {
     name: 'mc_knowledge_gaps',
-    description: 'Detect knowledge gaps: broken wiki-links, orphan files, stale content, and missing topics referenced across multiple files. Returns severity-scored gaps sorted by importance.',
+    description: '[Analysis helper] Pre-computed gap detection (broken links, orphans, stale content). Prefer mc_knowledge_link_graph + mc_list_knowledge_files for raw data; apply judgment in prompts/skills.',
     inputSchema: { type: 'object', properties: {}, required: [] },
-    handler: async () => api('POST', '/api/memory/process', { action: 'gap-detect' }),
+    handler: async () => runKnowledgeProcess('gap-detect'),
   },
   {
     name: 'mc_knowledge_consolidate',
-    description: 'Analyze knowledge graph structure: find hub nodes (critical files), bridge nodes (connectivity bottlenecks), clusters (tightly connected groups), and weak edges (pruning candidates). Returns network statistics.',
+    description: '[Analysis helper] Pre-computed graph analysis (hubs, bridges, clusters). Prefer mc_knowledge_link_graph for raw connectivity; apply judgment in prompts/skills.',
     inputSchema: { type: 'object', properties: {}, required: [] },
-    handler: async () => api('POST', '/api/memory/process', { action: 'consolidate' }),
+    handler: async () => runKnowledgeProcess('consolidate'),
   },
 
   // --- Agent Soul ---
@@ -499,8 +562,32 @@ const TOOLS = [
     handler: async () => api('GET', '/api/sessions'),
   },
   {
+    name: 'mc_pause_session',
+    description: 'Pause an active session',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Session ID' },
+      },
+      required: ['id'],
+    },
+    handler: async ({ id }) => controlSession(id, 'pause'),
+  },
+  {
+    name: 'mc_terminate_session',
+    description: 'Terminate an active session',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Session ID' },
+      },
+      required: ['id'],
+    },
+    handler: async ({ id }) => controlSession(id, 'terminate'),
+  },
+  {
     name: 'mc_control_session',
-    description: 'Control a session (monitor, pause, or terminate)',
+    description: '[Deprecated] Use mc_pause_session, mc_terminate_session, mc_list_sessions, or mc_session_transcript. Shim for compatibility — delegates pause/terminate/monitor to the control API.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -509,7 +596,13 @@ const TOOLS = [
       },
       required: ['id', 'action'],
     },
-    handler: async ({ id, action }) => api('POST', `/api/sessions/${id}/control`, { action }),
+    handler: async ({ id, action }) => {
+      const allowed = ['monitor', 'pause', 'terminate'];
+      if (!allowed.includes(action)) {
+        throw new Error(`Invalid action: ${action}. Must be: ${allowed.join(', ')}`);
+      }
+      return controlSession(id, action);
+    },
   },
   {
     name: 'mc_continue_session',

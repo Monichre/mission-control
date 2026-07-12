@@ -103,6 +103,11 @@ test.describe('MCP Server Integration', () => {
     expect(names).toContain('mc_write_memory')
     expect(names).toContain('mc_add_comment')
     expect(names).toContain('mc_health')
+    expect(names).toContain('mc_pause_session')
+    expect(names).toContain('mc_terminate_session')
+    expect(names).toContain('mc_list_knowledge_files')
+    expect(names).toContain('mc_knowledge_link_graph')
+    expect(names).toContain('mc_control_session')
   })
 
   test('unknown tool returns isError', async () => {
