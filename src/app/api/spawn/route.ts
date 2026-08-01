@@ -15,7 +15,9 @@ function getPreferredToolsProfile(): string {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = requireRole(request, 'operator')
+  // Temporary hardening (T-012b): dispatches agent runs that spawn host processes with
+  // the server's environment. Gated to admin until dispatch is constrained.
+  const auth = requireRole(request, 'admin')
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   const rateCheck = heavyLimiter(request)

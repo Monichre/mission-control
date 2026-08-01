@@ -172,7 +172,10 @@ export async function GET(request: NextRequest) {
  * POST /api/tasks - Create a new task
  */
 export async function POST(request: NextRequest) {
-  const auth = requireRole(request, 'operator');
+  // Temporary hardening (T-012b): task creation feeds dispatchTask, which spawns the
+  // `claude` CLI with the server's full env and no permission flag. Gated to admin until
+  // the spawn is constrained and per-user spend caps land.
+  const auth = requireRole(request, 'admin');
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const rateCheck = mutationLimiter(request);

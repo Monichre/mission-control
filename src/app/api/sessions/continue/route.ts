@@ -169,7 +169,10 @@ async function getSessionJsonlMtime(sessionId: string): Promise<number | null> {
  *   the host claude CLI itself.
  */
 export async function POST(request: NextRequest) {
-  const auth = requireRole(request, 'operator')
+  // Temporary hardening (T-012b): this path runs `sh -c '… claude --print'` on the host
+  // with the server's full environment and the owner's tool-permission config. Gated to
+  // admin until the spawn is constrained (explicit --permission-mode + env allowlist).
+  const auth = requireRole(request, 'admin')
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   try {

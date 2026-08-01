@@ -92,7 +92,10 @@ export async function GET(request: NextRequest) {
  * POST /api/pipelines/run - Start a pipeline run or advance a running one
  */
 export async function POST(request: NextRequest) {
-  const auth = requireRole(request, 'operator')
+  // Temporary hardening (T-012b): reaches runOpenClaw(['agent', …]) — real agent
+  // execution on the host. Gated to admin until per-user spend caps and constrained
+  // dispatch land.
+  const auth = requireRole(request, 'admin')
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   try {
